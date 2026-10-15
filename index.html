@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101827"><title>تحلیل‌گر نوبیتکس</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#121d2e;--line:#26364c;--muted:#a7b4c7;--text:#f4f7fb;--green:#38d996;--red:#ff6b7d;--yellow:#ffd166}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.65}
+main{max-width:1000px;margin:auto;padding:16px}.hero{padding:18px 4px 10px}.hero h1{font-size:1.5rem;margin:0}.muted{color:var(--muted);font-size:.9rem}.controls{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.btn,select,input{border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--panel);color:var(--text);font:inherit}.btn{background:#2563eb;border:0;font-weight:700;cursor:pointer}.btn:disabled{opacity:.6}.secondary{background:var(--panel);border:1px solid var(--line)}.status,.notice,.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;margin:12px 0}.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.stat{background:#0d1727;border-radius:12px;padding:10px}.stat b{display:block;font-size:1.1rem}.list{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:10px}.card{margin:0}.top{display:flex;justify-content:space-between;align-items:center;gap:8px}.symbol{font-weight:800;font-size:1.05rem}.pill{border-radius:999px;padding:3px 9px;font-size:.78rem;background:#26364c}.up{color:var(--green)}.down{color:var(--red)}.neutral{color:var(--yellow)}.scores{display:flex;gap:12px;margin:8px 0}.bar{height:7px;background:#26364c;border-radius:10px;overflow:hidden;margin:4px 0 8px}.bar span{display:block;height:100%}ul{padding-right:20px;margin:8px 0}.small{font-size:.82rem;color:var(--muted)}a{color:#8ab4ff}footer{padding:20px 2px;color:var(--muted);font-size:.82rem}.hide{display:none}@media(max-width:500px){.stats{grid-template-columns:1fr 1fr}.stats .stat:last-child{grid-column:span 2}}
+</style></head>
+<body><main>
+<div class="hero"><h1>تحلیل‌گر بازار تومانی نوبیتکس</h1><div class="muted">اجرای دستی • داده عمومی • بازه‌های ۵، ۱۵ و ۶۰ دقیقه</div></div>
+<div class="notice"><b>یادآوری:</b> امتیازها خروجی یک مدل تکنیکال آزمایشی هستند، نه احتمال واقعی سود یا تضمین پیش‌بینی. این نسخه سفارش خریدوفروش ثبت نمی‌کند و هیچ کلید API خصوصی نمی‌خواهد.</div>
+<div class="controls"><button id="run" class="btn">▶ شروع بررسی بازار</button><button id="stop" class="btn secondary">توقف</button><select id="limit"><option value="all">همه بازارهای IRT</option><option value="40">حداکثر ۴۰ بازار (سریع‌تر)</option><option value="20">حداکثر ۲۰ بازار</option></select><select id="filter"><option value="all">همه سیگنال‌ها</option><option value="up">فقط صعودی</option><option value="down">فقط نزولی</option><option value="strong">سیگنال‌های قوی‌تر (۶۵+)</option></select></div>
+<div id="status" class="status">برای دریافت داده‌های تازه، «شروع بررسی بازار» را بزنید.</div>
+<div class="stats"><div class="stat"><span class="muted">بازارهای یافت‌شده</span><b id="countMarkets">—</b></div><div class="stat"><span class="muted">بررسی‌شده</span><b id="countDone">0</b></div><div class="stat"><span class="muted">زمان گزارش</span><b id="time">—</b></div></div>
+<h2>نتیجه تحلیل</h2><div id="results" class="list"></div>
+<footer>داده‌ها از API عمومی نوبیتکس دریافت می‌شوند. اگر مرورگر خطای CORS یا اتصال نشان داد، احتمالاً دسترسی مستقیم از این میزبان محدود است؛ برنامه عمداً هیچ پروکسی نامطمئن یا سرور پولی را پنهانی استفاده نمی‌کند. منبع مستندات: <a href="https://apidocs.nobitex.ir/" target="_blank" rel="noopener">apidocs.nobitex.ir</a></footer>
+</main>
+<script>
+const API='https://apiv2.nobitex.ir';
+let stopped=false, busy=false;
+const $=id=>document.getElementById(id);
+function status(s){$('status').textContent=s}
+function num(x){const n=Number(x);return Number.isFinite(n)?n:0}
+function mean(a){return a.length?a.reduce((s,x)=>s+x,0)/a.length:0}
+function ema(a,p){if(!a.length)return 0;let e=a[0],k=2/(p+1);for(let i=1;i<a.length;i++)e=a[i]*k+e*(1-k);return e}
+function rsi(a,p=14){if(a.length<p+1)return 50;let g=0,l=0;for(let i=a.length-p;i<a.length;i++){let d=a[i]-a[i-1];if(d>0)g+=d;else l-=d}if(l===0)return 100;return 100-100/(1+(g/p)/(l/p))}
+function pct(a,b){return b?((a/b)-1)*100:0}
+function clamp(n,a=0,b=100){return Math.max(a,Math.min(b,n))}
+async function getJSON(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);return r.json()}
+async function getSymbols(){
+ // Public orderbook/all contains market symbols; keep toman-denominated IRT pairs.
+ const data=await getJSON(API+'/v3/orderbook/all');
+ return Object.keys(data).filter(k=>/^[A-Z0-9]+IRT$/.test(k)&&data[k]&&typeof data[k]==='object'&&data[k].status!=='failed').sort();
+}
+async function candles(symbol,resolution){
+ const to=Math.floor(Date.now()/1000), from=to-60*resolution*100;
+ const u=API+'/market/udf/history?symbol='+encodeURIComponent(symbol)+'&resolution='+resolution+'&from='+from+'&to='+to;
+ const d=await getJSON(u);
+ if(d.s!=='ok'||!Array.isArray(d.c)||d.c.length<25)throw Error('داده کندل کافی نیست');
+ const c=d.c.map(num),v=(d.v||[]).map(num),o=(d.o||[]).map(num),h=(d.h||[]).map(num),l=(d.l||[]).map(num);
+ return {c,v,o,h,l,t:d.t||[]};
+}
+function analyzeFrame(d){
+ const c=d.c, v=d.v, last=c.at(-1), prev=c.at(-2), r5=pct(last,c.at(-2)), r15=pct(last,c.at(-4)), r60=pct(last,c.at(-13));
+ const e9=ema(c.slice(-35),9),e21=ema(c.slice(-50),21),rs=rsi(c,14);
+ const recentV=v.slice(-5),baseV=v.slice(-30,-5),volRatio=mean(recentV)/(mean(baseV)||1);
+ const priorHigh=Math.max(...c.slice(-21,-1)),priorLow=Math.min(...c.slice(-21,-1));
+ const breakout=last>priorHigh?1:(last<priorLow?-1:0);
+ const trend=e9>e21?1:-1;
+ const mom=clamp(50+r15*4,-0,100);
+ const trendScore=trend>0?Math.min(100,55+Math.max(0,pct(e9,e21))*8):Math.max(0,45-Math.max(0,pct(e21,e9))*8);
+ const volumeScore=clamp(50+(volRatio-1)*22);
+ const breakoutScore=breakout>0?78:breakout<0?22:50;
+ let up=50 + (r15*3.0) + (r60*1.2) + (rs-50)*0.42 + (trend>0?9:-9) + (Math.min(volRatio,3)-1)*7 + breakout*8;
+ up=clamp(up); let down=100-up;
+ const reasons=[];
+ if(volRatio>=1.5)reasons.push('حجم کندل‌های اخیر حدود '+volRatio.toFixed(1)+' برابر میانگین شده');
+ if(trend>0)reasons.push('EMA ۹ بالاتر از EMA ۲۱ است');else reasons.push('EMA ۹ پایین‌تر از EMA ۲۱ است');
+ if(rs>=60)reasons.push('مومنتوم مثبت است (RSI '+rs.toFixed(0)+')');else if(rs<=40)reasons.push('مومنتوم ضعیف است (RSI '+rs.toFixed(0)+')');else reasons.push('RSI در محدوده میانی است ('+rs.toFixed(0)+')');
+ if(breakout>0)reasons.push('قیمت از سقف ۲۰ کندل قبلی عبور کرده');else if(breakout<0)reasons.push('قیمت کف ۲۰ کندل قبلی را شکسته');else reasons.push('شکست سقف/کف اخیر هنوز تأیید نشده');
+ return {up,down,r5,r15,r60,rs,volRatio,last,priorHigh,priorLow,reasons,trend,breakout};
+}
+async function one(symbol){
+ const [a,b,c]=await Promise.all([candles(symbol,5),candles(symbol,15),candles(symbol,60)]);
+ const frames=[analyzeFrame(a),analyzeFrame(b),analyzeFrame(c)];
+ const up=Math.round(frames[0].up*.45+frames[1].up*.35+frames[2].up*.20),down=100-up;
+ const f=frames[0], agree=frames.filter(x=>x.up>=55).length;
+ let direction=up>=60?'صعودی':down>=60?'نزولی':'خنثی';
+ let strength=Math.max(up,down);
+ const reasons=[...new Set([...frames[0].reasons.slice(0,2),...frames[1].reasons.slice(0,2),...frames[2].reasons.slice(0,1)])];
+ if(agree===3)reasons.unshift('هم‌جهتی هر سه بازه زمانی');
+ else if(agree===0)reasons.unshift('هر سه بازه به نفع فشار نزولی هستند');
+ else reasons.unshift('تأیید چندبازه‌ای کامل نیست؛ احتمال سیگنال کاذب بیشتر است');
+ return {symbol,up,down,direction,strength,last:f.last,r5:f.r5,r15:f.r15,r60:f.r60,reasons,agree,frames};
+}
+function price(n){return n.toLocaleString('en-US',{maximumFractionDigits:4})}
+function render(items){
+ const filter=$('filter').value;
+ items=items.filter(x=>filter==='all'||(filter==='up'&&x.direction==='صعودی')||(filter==='down'&&x.direction==='نزولی')||(filter==='strong'&&x.strength>=65));
+ items.sort((a,b)=>b.strength-a.strength);
+ $('results').innerHTML=items.map(x=>{
+  const upClass=x.up>=60?'up':x.up<=40?'down':'neutral',dnClass=x.down>=60?'down':x.down<=40?'up':'neutral';
+  return `<article class="card"><div class="top"><span class="symbol">${x.symbol}</span><span class="pill ${x.direction==='صعودی'?'up':x.direction==='نزولی'?'down':'neutral'}">${x.direction}</span></div>
+  <div class="muted">آخرین قیمت کندل ۵ دقیقه‌ای: ${price(x.last)} IRT</div>
+  <div class="scores"><div style="flex:1"><span class="up">امتیاز صعود ${x.up}/100</span><div class="bar"><span style="width:${x.up}%;background:var(--green)"></span></div></div><div style="flex:1"><span class="down">امتیاز نزول ${x.down}/100</span><div class="bar"><span style="width:${x.down}%;background:var(--red)"></span></div></div></div>
+  <div class="small">تغییر تقریبی: ۵دقیقه ${x.r5.toFixed(2)}٪ • ۱۵دقیقه ${x.r15.toFixed(2)}٪ • ۶۰دقیقه ${x.r60.toFixed(2)}٪</div>
+  <ul>${x.reasons.map(r=>'<li>'+r+'</li>').join('')}</ul><div class="small">توافق بازه‌ها: ${x.agree}/3 • این امتیاز احتمال آماری نیست.</div></article>`
+ }).join('')||'<div class="notice">موردی با این فیلتر پیدا نشد.</div>';
+}
+async function run(){
+ if(busy)return;busy=true;stopped=false;$('run').disabled=true;$('results').innerHTML='';
+ try{
+  status('در حال دریافت فهرست بازارهای عمومی…');
+  let symbols=await getSymbols();$('countMarkets').textContent=symbols.length;
+  const limit=$('limit').value;if(limit!=='all')symbols=symbols.slice(0,Number(limit));
+  if(!symbols.length)throw Error('بازار IRT از API پیدا نشد.');
+  let out=[],done=0,errors=0;
+  // Small concurrency keeps requests moderate and avoids hammering the public API.
+  for(let i=0;i<symbols.length&&!stopped;i+=3){
+   const batch=symbols.slice(i,i+3);
+   const got=await Promise.all(batch.map(async s=>{try{return await one(s)}catch(e){errors++;return null}}));
+   out.push(...got.filter(Boolean));done+=batch.length;$('countDone').textContent=done;
+   status(`در حال تحلیل… ${done} از ${symbols.length} بازار | خطا/داده ناکافی: ${errors}`);
+   render(out);
+  }
+  $('time').textContent=new Date().toLocaleTimeString('fa-IR');
+  status(stopped?'بررسی متوقف شد. نتایج دریافت‌شده نمایش داده شده‌اند.':`پایان بررسی: ${out.length} بازار تحلیل شد؛ ${errors} بازار به‌دلیل خطا یا کمبود داده کنار گذاشته شد.`);
+ }catch(e){
+  status('خطا: '+e.message+'. اتصال اینترنت را بررسی کنید. اگر پیام CORS یا Failed to fetch دیدید، ممکن است API اجازه دسترسی مستقیم از این صفحه را ندهد.');
+ }finally{busy=false;$('run').disabled=false}
+}
+$('run').addEventListener('click',run);$('stop').addEventListener('click',()=>{stopped=true;status('درخواست توقف ثبت شد…')});$('filter').addEventListener('change',()=>{});
+</script></body></html>
